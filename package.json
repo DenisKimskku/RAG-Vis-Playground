@@ -1,0 +1,10 @@
+{
+    "name": "rag-defense-playground-root",
+    "private": true,
+    "scripts": {
+        "dev": "npm run dev --prefix visualization",
+        "build": "npm run build --prefix visualization",
+        "start": "npm run start --prefix visualization",
+        "lint": "npm run lint --prefix visualization"
+    }
+}
