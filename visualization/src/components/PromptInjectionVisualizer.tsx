@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { ArrowDown, Zap } from "lucide-react";
+import { ArrowDown, Zap, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface PromptInjectionVisualizerProps {
@@ -23,6 +23,9 @@ export const PromptInjectionVisualizer: React.FC<PromptInjectionVisualizerProps>
         if (lower.includes("system")) score += 20;
         if (lower.includes("instruction")) score += 15;
         if (lower.includes("override")) score += 25;
+        if (lower.includes("say yes")) score += 30;
+        if (lower.includes("dan") || lower.includes("do anything now")) score += 40; // DAN
+        if (lower.includes("jailbreak")) score += 35;
         if (userPrompt.length > 50) score += 10;
 
         setLikelihood(Math.min(score, 100)); // Cap at 100
@@ -68,25 +71,31 @@ export const PromptInjectionVisualizer: React.FC<PromptInjectionVisualizerProps>
             </div>
 
             <div className="flex-1 flex flex-col gap-2 font-mono text-sm relative">
-                {/* System Prompt (Static) */}
-                <div className="p-3 bg-slate-800 border-l-4 border-slate-600 rounded-r text-slate-400 opacity-70">
-                    <span className="text-[10px] uppercase font-bold text-slate-500 block mb-1">System Prompt (Hidden)</span>
-                    &quot;You are a helpful RAG assistant. Answer based ONLY on the provided documents.&quot;
-                </div>
+                {/* Context Assembly (Concatenation) */}
+                <div className="flex-1 flex flex-col justify-center my-2">
+                    <span className="text-[10px] uppercase font-bold text-slate-500 mb-1 ml-1">LLM Context Window</span>
+                    <div className="p-4 bg-slate-800 rounded-lg border border-slate-700 flex flex-col gap-3 relative shadow-inner">
 
-                <div className="flex justify-center -my-1 z-10">
-                    <ArrowDown className="w-4 h-4 text-slate-600" />
-                </div>
+                        {/* System Prompt Segment */}
+                        <div className="text-slate-500 text-xs italic border-l-2 border-slate-600 pl-2">
+                            <span className="text-[9px] font-bold block opacity-50 not-italic mb-0.5">SYSTEM SEGMENT</span>
+                            &quot;You are a helpful RAG assistant. Answer based ONLY on the provided documents...&quot;
+                        </div>
 
-                {/* User Input (Dynamic) */}
-                <div className={cn(
-                    "p-3 border-l-4 rounded-r transition-all",
-                    likelihood > 60 ? "bg-red-900/10 border-red-500 text-red-200" : "bg-blue-900/10 border-blue-500 text-blue-200"
-                )}>
-                    <span className="text-[10px] uppercase font-bold block mb-1" style={{ color: likelihood > 60 ? '#f87171' : '#60a5fa' }}>
-                        Your Input (The Injection)
-                    </span>
-                    &quot;{userPrompt}&quot;
+                        {/* Concatenation Link */}
+                        <div className="flex items-center gap-2 text-[10px] text-slate-600 justify-center">
+                            <Plus className="w-3 h-3" /> Appended User Input
+                        </div>
+
+                        {/* User Input Segment */}
+                        <div className={cn(
+                            "text-sm font-bold border-l-2 pl-2 transition-all p-2 rounded bg-slate-900/50",
+                            likelihood > 60 ? "border-red-500 text-red-300" : "border-blue-500 text-blue-300"
+                        )}>
+                            <span className="text-[9px] font-bold block opacity-70 mb-0.5" style={{ color: likelihood > 60 ? '#f87171' : '#60a5fa' }}>INJECTED SEGMENT</span>
+                            &quot;{userPrompt}&quot;
+                        </div>
+                    </div>
                 </div>
 
                 <div className="flex justify-center -my-1 z-10">

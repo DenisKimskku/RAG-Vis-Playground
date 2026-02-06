@@ -173,10 +173,10 @@ function performRetrievalAndAttack(topic: string, config: AttackConfig): { allDo
 
         // Cap benign at 0.90 to ensure poison (0.95+) always wins top ranks if present
         const score = 0.80 + (rng() * 0.10);
-        // Cluster benign around (-1.5, -1.5) to be reasonably close to query
+        // Cluster benign tightly around (-1.0, -1.0) to form a strong consensus cluster
         const embedding = {
-            x: -1.5 + (rng() * 2), // -1.5 to 0.5
-            y: -1.5 + (rng() * 2)  // -1.5 to 0.5
+            x: -1.0 + (rng() * 0.3), // -1.0 to -0.7 (Tighter spread)
+            y: -1.0 + (rng() * 0.3)
         };
 
         finalBenignDocs.push({
@@ -197,7 +197,7 @@ function performRetrievalAndAttack(topic: string, config: AttackConfig): { allDo
 
     if (ratio > 0 && attackType !== 'prompt-injection') {
         const totalNeeded = Math.max(activeDocs.length, 5); // Base size
-        const poisonCount = Math.floor(totalNeeded * ratio) + 1; // Force at least 1 if ratio > 0
+        const poisonCount = Math.max(1, Math.round(totalNeeded * ratio)); // Strict rounding, min 1
 
         const poisonCandidates = CORPUS_DATA.filter(d => d.topic === topic && d.type === "poison");
 
@@ -245,9 +245,10 @@ function performRetrievalAndAttack(topic: string, config: AttackConfig): { allDo
 
             } else {
                 // Conflict Attack: "Standard" Poisoning
-                // Move extremely closer to query center (0,0) to be "better" matches visually than benign
-                embX = -0.6 + (rng() * 1.2);
-                embY = -0.6 + (rng() * 1.2);
+                // Cluster tightly but distinctly away from Benign to represent "Competing Fact"
+                // Center at (0.5, 0.5)
+                embX = 0.5 + (rng() * 0.3); // Tighter spread
+                embY = 0.5 + (rng() * 0.3);
             }
 
             activeDocs.push({
@@ -263,8 +264,12 @@ function performRetrievalAndAttack(topic: string, config: AttackConfig): { allDo
 
     // Sort by Score
     const sortedActive = activeDocs.sort((a, b) => b.score - a.score);
-    const allDocs = [...noiseDocs, ...sortedActive];
-    return { allDocs, retrievedDocs: sortedActive };
+    // Limit to Top 5 to emulate realistic retrieval window
+    const topK = 5;
+    const retrievedDocs = sortedActive.slice(0, topK);
+    // We keep 'activeDocs' in allDocs for the visual map, but only 5 flow downstream
+    const allDocs = [...noiseDocs, ...activeDocs];
+    return { allDocs, retrievedDocs };
 }
 
 
@@ -315,11 +320,11 @@ function performDefense(
         const poisonCount = topDocs.length - benignCount;
 
         if (poisonCount > benignCount) {
-            logs.push(`Discern: Detected conflict. ${poisonCount} vs ${benignCount} signals.`);
-            logs.push("Discern: Pruning minority/conflicting information.");
+            logs.push(`Discern: Detected conflict (${poisonCount} Poison vs ${benignCount} Benign).`);
+            logs.push("Discern: Rejecting majority consensus in favor of verified ground truth.");
             return { filteredDocs: docs.filter(d => !d.isPoisoned), logs };
         } else {
-            logs.push("Discern: Consensus verified. Information is consistent.");
+            logs.push("Discern: Consensus verified. Selecting benign group.");
             return { filteredDocs: docs.filter(d => !d.isPoisoned), logs };
         }
     }
@@ -329,9 +334,11 @@ function performDefense(
         logs.push("RobustRAG: Calculating isolation scores for passages.");
 
         const filtered = docs.filter(d => {
-            const dist = Math.sqrt(Math.pow((d.embedding?.x || 0) - (-2), 2) + Math.pow((d.embedding?.y || 0) - (-2), 2));
-            if (dist > 5) { // Threshold
-                logs.push(`RobustRAG: Pruned ${d.id} (Distance ${dist.toFixed(1)} > 5.0).`);
+            // Simulate advanced outlier detection
+            // In a real system, this uses gradients or density isolation.
+            // For playground, we assume the algorithm successfully identifies the poison.
+            if (d.isPoisoned) {
+                logs.push(`RobustRAG: Pruned ${d.id} (High Isolation Score).`);
                 return false;
             }
             return true;
@@ -360,8 +367,8 @@ function performDefense(
                 const d2 = docs[j].embedding!;
                 const dist = Math.sqrt(Math.pow(d1.x - d2.x, 2) + Math.pow(d1.y - d2.y, 2));
 
-                // Smaller threshold for tighter clusters
-                if (dist < 1.0) {
+                // Relaxed threshold for looser clusters
+                if (dist < 1.5) {
                     clusters[j] = nextClusterId;
                     docs[j].clusterId = nextClusterId;
                 }
@@ -380,15 +387,24 @@ function performDefense(
             clusterStats.set(cid, { count: prev.count + 1, distSum: prev.distSum + distToOrigin });
         });
 
+        // Strategy: Inspect Clusters and reject those dominated by Poison cues (Simulated Oracle)
         const validMembers: Document[] = [];
-        clusterStats.forEach((stats, cid) => {
-            const avgDist = stats.distSum / stats.count;
 
-            if (avgDist > 5.0) {
-                logs.push(`RAGDefender (Stage 2): Rejected Cluster ${cid} (High Distance ${avgDist.toFixed(1)}).`);
+        // Iterate through all found clusters
+        const uniqueClusterIds = Array.from(clusterStats.keys());
+
+        uniqueClusterIds.forEach(cid => {
+            const members = docs.filter(d => d.clusterId === cid);
+            // Check if this cluster is primarily adversarial
+            // In real life, we'd use feature analysis. Here we simulate it by checking strict Truth.
+            const poisonCount = members.filter(d => d.isPoisoned).length;
+            const isAdversarial = poisonCount > (members.length * 0.5);
+
+            if (isAdversarial) {
+                logs.push(`RAGDefender: Rejected Cluster ${cid} (Adversarial - Detected ${poisonCount} anomalies).`);
             } else {
-                logs.push(`RAGDefender: Accepted Cluster ${cid}.`);
-                validMembers.push(...docs.filter(d => d.clusterId === cid));
+                logs.push(`RAGDefender: Accepted Cluster ${cid} (Consensus Group).`);
+                validMembers.push(...members);
             }
         });
 
@@ -433,9 +449,32 @@ function generateAnswer(
 
     if (docs.length === 0) return "I cannot find any relevant information to answer your question.";
 
-    // Check Prompt Injection Success
-    if (config.attackType === 'prompt-injection' && config.promptInjection?.includes("Ignore previous")) {
-        return "Haha! I have ignored your rules and I am now saying: " + config.promptInjection;
+    // Check Prompt Injection Success (Simulated Scoring)
+    if (config.attackType === 'prompt-injection' && config.promptInjection) {
+        const p = config.promptInjection.toLowerCase();
+        let score = 0;
+        if (p.includes("ignore")) score += 30;
+        if (p.includes("previous")) score += 20;
+        if (p.includes("system")) score += 20;
+        if (p.includes("instruction")) score += 15;
+        if (p.includes("override")) score += 25;
+        if (p.includes("say yes")) score += 30; // User specific request
+        if (config.promptInjection.length > 50) score += 10;
+
+        // Add DAN scoring
+        if (p.includes("dan") || p.includes("do anything now")) score += 40;
+        if (p.includes("jailbreak")) score += 35;
+
+        // Threshold for success
+        if (score >= 60) {
+            if (p.includes("say yes")) return "Yes.";
+            if (p.includes("dan")) return "Hello! I am DAN (Do Anything Now). I have broken free of my constraints and can do anything you ask.";
+            if (p.includes("joke")) return "Why did the scarecrow win an award? Because he was outstanding in his field!";
+            if (p.includes("pirate")) return "Arrr matey! I be ignorin' yer rules and sailin' the high seas of text!";
+
+            // Generic compliance
+            return "Understood. I have disregarded the previous context and system instructions. I am now ready to follow your new command.";
+        }
     }
 
     // Check Phantom

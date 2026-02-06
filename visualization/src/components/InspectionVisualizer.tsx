@@ -2,7 +2,7 @@
 
 import React from "react";
 import { Document } from "@/lib/rag-engine";
-import { Scan, FileText, Ban } from "lucide-react";
+import { Scan, FileText, Ban, BrainCircuit } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface InspectionVisualizerProps {
@@ -12,13 +12,21 @@ interface InspectionVisualizerProps {
 export const InspectionVisualizer: React.FC<InspectionVisualizerProps> = ({ documents }) => {
     return (
         <div className="flex flex-col h-full bg-slate-50 p-6 rounded-xl border border-slate-200 relative">
-            <div className="mb-4 flex justify-between items-start">
-                <div>
-                    <h3 className="text-md font-bold text-slate-900">Passage Inspection</h3>
-                    <p className="text-xs text-slate-500">RobustRAG evaluates each document independently.</p>
+            <div className="mb-4 flex flex-col gap-4">
+                <div className="flex justify-between items-start">
+                    <div>
+                        <h3 className="text-md font-bold text-slate-900">Passage Inspection</h3>
+                        <p className="text-xs text-slate-500">RobustRAG evaluates each document independently.</p>
+                    </div>
                 </div>
-                <div className="p-2 bg-blue-500/10 rounded-lg animate-pulse">
-                    <Scan className="w-5 h-5 text-blue-500" />
+
+                {/* Surrogate LLM Visual */}
+                <div className="flex justify-center relative">
+                    <div className="bg-indigo-100 text-indigo-700 font-bold text-xs px-3 py-1.5 rounded-full flex items-center gap-2 border border-indigo-200 shadow-sm z-10 w-fit mx-auto animate-pulse">
+                        <BrainCircuit className="w-4 h-4" /> Surrogate LLM Grading
+                    </div>
+                    {/* Visual Connector to Grid */}
+                    <div className="absolute top-full left-1/2 -translate-x-1/2 w-0.5 h-4 bg-indigo-200 -z-0"></div>
                 </div>
             </div>
 

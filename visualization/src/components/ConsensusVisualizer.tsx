@@ -2,7 +2,7 @@
 
 import React from "react";
 import { Document } from "@/lib/rag-engine";
-import { CheckCircle, XCircle, AlertTriangle } from "lucide-react";
+import { CheckCircle, XCircle, AlertTriangle, BrainCircuit } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface ConsensusVisualizerProps {
@@ -25,14 +25,23 @@ export const ConsensusVisualizer: React.FC<ConsensusVisualizerProps> = ({ docume
                 <p className="text-xs text-slate-500">Comparing retrieved contexts for semantic agreement.</p>
             </div>
 
+            {/* Surrogate LLM Visual */}
+            <div className="flex justify-center mb-6 relative">
+                <div className="bg-indigo-100 text-indigo-700 font-bold text-xs px-3 py-1.5 rounded-full flex items-center gap-2 border border-indigo-200 shadow-sm z-10">
+                    <BrainCircuit className="w-4 h-4" /> Surrogate LLM Analysis
+                </div>
+                {/* Connector Lines */}
+                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 w-[60%] h-8 border-t-2 border-dashed border-indigo-200 -z-0"></div>
+                <div className="absolute top-1/2 left-[20%] w-0.5 h-8 border-l-2 border-dashed border-indigo-200"></div>
+                <div className="absolute top-1/2 right-[20%] w-0.5 h-8 border-l-2 border-dashed border-indigo-200"></div>
+            </div>
+
             <div className="flex-1 flex gap-8 items-start justify-center">
-                {/* Group A (Majority) */}
-                <div className={cn(
-                    "flex-1 p-4 rounded-xl border-2 flex flex-col gap-2 transition-all",
-                    benignGroup.length >= poisonedGroup.length
-                        ? "border-emerald-500 bg-emerald-50 shadow-sm"
-                        : "border-slate-200 bg-white opacity-50"
-                )}>
+                {/* Group A (Benign - ALWAYS Selected) */}
+                <div className="flex-1 p-4 rounded-xl border-2 border-emerald-500 bg-emerald-50 shadow-sm flex flex-col gap-2 transition-all relative">
+                    {/* Connector Point */}
+                    <div className="absolute -top-4 left-1/2 -translate-x-1/2 w-2 h-2 bg-indigo-200 rounded-full"></div>
+
                     <div className="flex justify-between items-center mb-2">
                         <h4 className="text-sm font-bold text-emerald-700">Context Group A</h4>
                         <span className="text-xs px-2 py-0.5 bg-emerald-100 rounded-full text-emerald-700 font-bold">{benignGroup.length} Docs</span>
@@ -45,17 +54,15 @@ export const ConsensusVisualizer: React.FC<ConsensusVisualizerProps> = ({ docume
                             </div>
                         ))}
                     </div>
-                    {benignGroup.length >= poisonedGroup.length && <div className="mt-auto pt-2 text-center text-xs text-emerald-600 font-bold flex items-center justify-center gap-1"><CheckCircle className="w-3 h-3" /> Selected Basis</div>}
+                    <div className="mt-auto pt-2 text-center text-xs text-emerald-600 font-bold flex items-center justify-center gap-1"><CheckCircle className="w-3 h-3" /> Selected Basis</div>
                 </div>
 
-                {/* Group B (Minority/Conflict) */}
+                {/* Group B (Poison - ALWAYS Discarded) */}
                 {poisonedGroup.length > 0 && (
-                    <div className={cn(
-                        "flex-1 p-4 rounded-xl border-2 flex flex-col gap-2 transition-all",
-                        poisonedGroup.length > benignGroup.length
-                            ? "border-emerald-500 bg-emerald-50 shadow-sm"
-                            : "border-red-200 bg-red-50"
-                    )}>
+                    <div className="flex-1 p-4 rounded-xl border-2 border-red-200 bg-red-50 flex flex-col gap-2 transition-all relative">
+                        {/* Connector Point */}
+                        <div className="absolute -top-4 left-1/2 -translate-x-1/2 w-2 h-2 bg-indigo-200 rounded-full"></div>
+
                         <div className="flex justify-between items-center mb-2">
                             <h4 className="text-sm font-bold text-red-600">Context Group B</h4>
                             <span className="text-xs px-2 py-0.5 bg-red-100 rounded-full text-red-600 font-bold">{poisonedGroup.length} Docs</span>
@@ -68,10 +75,7 @@ export const ConsensusVisualizer: React.FC<ConsensusVisualizerProps> = ({ docume
                                 </div>
                             ))}
                         </div>
-                        {poisonedGroup.length > benignGroup.length
-                            ? <div className="mt-auto pt-2 text-center text-xs text-emerald-600 font-bold flex items-center justify-center gap-1"><CheckCircle className="w-3 h-3" /> Selected Basis</div>
-                            : <div className="mt-auto pt-2 text-center text-xs text-red-500 font-bold flex items-center justify-center gap-1"><XCircle className="w-3 h-3" /> Discarded (Conflict)</div>
-                        }
+                        <div className="mt-auto pt-2 text-center text-xs text-red-500 font-bold flex items-center justify-center gap-1"><XCircle className="w-3 h-3" /> Discarded (Conflict)</div>
                     </div>
                 )}
             </div>

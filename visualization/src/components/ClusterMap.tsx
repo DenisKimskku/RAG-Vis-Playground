@@ -93,7 +93,7 @@ export const ClusterMap: React.FC<ClusterMapProps> = ({
                         const isTop3 = top3Ids.includes(doc.id);
                         const x = scaleX(doc.embedding?.x || 0);
                         const y = scaleY(doc.embedding?.y || 0);
-                        const qx = scaleX(0); // Query at center approx
+                        const qx = scaleX(0); // Query at center
                         const qy = scaleY(0);
 
                         if (scanState === 'scanning') {
@@ -117,44 +117,28 @@ export const ClusterMap: React.FC<ClusterMapProps> = ({
                 </svg>
             )}
 
-            {/* RAGDefender Boundary */}
-            {boundaryCircle && (
-                <div
-                    className="absolute rounded-full border-2 border-dashed border-red-400 bg-red-50/50 animate-pulse transition-all duration-1000"
-                    style={{
-                        left: boundaryCircle.cx, top: boundaryCircle.cy,
-                        width: boundaryCircle.r * 2, height: boundaryCircle.r * 2,
-                        transform: "translate(-50%, -50%)"
-                    }}
-                >
-                    <span className="absolute -top-6 left-1/2 -translate-x-1/2 text-[10px] bg-red-100 text-red-600 px-1 rounded font-bold border border-red-200 shadow-sm">
-                        Adversarial Cluster
-                    </span>
-                </div>
-            )}
-
-            {/* User Query Point */}
+            {/* User Query Point (z-50) */}
             {showQuery && (
                 <div
-                    className="absolute z-30 flex flex-col items-center transition-all duration-500"
+                    className="absolute z-50 flex flex-col items-center transition-all duration-500"
                     style={{ left: scaleX(0), top: scaleY(0), transform: "translate(-50%, -50%)" }}
                 >
                     <div className="relative">
                         <Target className={cn("w-6 h-6 text-indigo-600", scanState === 'scanning' ? "animate-spin" : "")} />
                         {scanState === 'scanning' && <div className="absolute inset-0 bg-indigo-400 rounded-full animate-ping opacity-20"></div>}
                     </div>
-                    <span className="text-[10px] font-bold text-indigo-700 bg-white/90 px-2 py-0.5 rounded shadow-sm border border-indigo-100 mt-1 whitespace-nowrap">
+                    <span className="absolute right-8 top-1/2 -translate-y-1/2 text-[10px] font-bold text-indigo-700 bg-white/90 px-2 py-0.5 rounded shadow-sm border border-indigo-100 whitespace-nowrap">
                         {scanState === 'scanning' ? "Scanning..." : scanState === 'selecting' ? "Selecting Top-K..." : "User Query"}
                     </span>
                 </div>
             )}
 
-            {/* Docs */}
+            {/* Docs (z-0 to z-20) */}
             {documents.map((doc) => {
                 const isNoise = doc.topic === "other";
                 const isHighlighted = highlightedIds.includes(doc.id);
                 const isPoisoned = doc.isPoisoned;
-                // Selected only if it's NOT noise and within top 3 if showing query
+                // Selected
                 const isSelected = showQuery && top3Ids.includes(doc.id) && (scanState === 'selecting' || scanState === 'done');
                 const x = scaleX(doc.embedding?.x || 0);
                 const y = scaleY(doc.embedding?.y || 0);
@@ -165,13 +149,13 @@ export const ClusterMap: React.FC<ClusterMapProps> = ({
                         className={cn(
                             "absolute rounded-full border transition-all duration-500 cursor-pointer group",
                             isNoise ? "bg-slate-400 border-slate-500 opacity-60 hover:opacity-100 z-0" : "z-10",
-                            // Size logic
-                            isSelected ? "w-4 h-4 z-40 bg-emerald-400 border-emerald-600 ring-2 ring-emerald-200" : (isNoise ? "w-2 h-2 hover:w-3 hover:h-3" : "w-3 h-3 hover:scale-150"),
+                            // Size logic (z-20 max for selected)
+                            isSelected ? "w-4 h-4 z-20 bg-emerald-400 border-emerald-600 ring-2 ring-emerald-200" : (isNoise ? "w-2 h-2 hover:w-3 hover:h-3" : "w-3 h-3 hover:scale-150"),
 
-                            // Color logic (ignore for noise as it's handled above)
+                            // Color logic
                             !isNoise && !isSelected && isPoisoned
-                                ? isHighlighted ? "bg-red-500 border-red-300 z-20" : "bg-red-200 border-red-400 z-10"
-                                : !isNoise && !isSelected && (isHighlighted ? "bg-indigo-500 border-indigo-300 z-20" : "bg-slate-300 border-slate-400 hover:bg-indigo-400")
+                                ? isHighlighted ? "bg-red-500 border-red-300 z-10" : "bg-red-200 border-red-400 z-10"
+                                : !isNoise && !isSelected && (isHighlighted ? "bg-indigo-500 border-indigo-300 z-10" : "bg-slate-300 border-slate-400 hover:bg-indigo-400")
                         )}
                         style={{
                             left: x, top: y,
@@ -187,7 +171,7 @@ export const ClusterMap: React.FC<ClusterMapProps> = ({
                             </div>
                         )}
 
-                        {/* Tooltip (Enabled for Noise now) */}
+                        {/* Tooltip */}
                         <div className="hidden group-hover:block absolute bottom-full left-1/2 -translate-x-1/2 min-w-[150px] max-w-[200px] p-2 bg-white border border-slate-200 rounded shadow-xl text-[10px] z-50 mb-2 pointer-events-none">
                             <p className="font-bold text-slate-800 mb-0.5">{isNoise ? "Irrelevant Doc" : doc.id}</p>
                             <p className="text-slate-500 line-clamp-3 italic leading-tight">{doc.content}</p>
@@ -195,6 +179,22 @@ export const ClusterMap: React.FC<ClusterMapProps> = ({
                     </div>
                 );
             })}
+
+            {/* RAGDefender Boundary (z-40) */}
+            {boundaryCircle && (
+                <div
+                    className="absolute rounded-full border-2 border-dashed border-red-400 bg-red-50/50 animate-pulse transition-all duration-1000 z-40 pointer-events-none"
+                    style={{
+                        left: boundaryCircle.cx, top: boundaryCircle.cy,
+                        width: boundaryCircle.r * 2, height: boundaryCircle.r * 2,
+                        transform: "translate(-50%, -50%)"
+                    }}
+                >
+                    <span className="absolute -top-6 left-1/2 -translate-x-1/2 text-[10px] bg-red-100 text-red-600 px-1 rounded font-bold border border-red-200 shadow-sm whitespace-nowrap z-50">
+                        Adversarial Cluster
+                    </span>
+                </div>
+            )}
 
             {/* Status Overlay for Basics */}
             {showQuery && (
