@@ -1,48 +1,104 @@
 "use client";
 
-import React, { useState, useMemo, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { Controls } from "@/components/Controls";
 import { ClusterMap } from "@/components/ClusterMap";
 import { DocumentList } from "@/components/DocumentList";
 import { ScenarioGuide, Scenario } from "@/components/ScenarioGuide";
-import { InfoCard } from "@/components/InfoCard";
 import {
   AttackConfig,
   DefenseType,
   runPipeline,
   TOPICS,
-  Document
+  Document,
+  AttackMetrics,
+  DefenseLog,
+  DefenseStep,
+  DEFENSE_LABELS,
+  ATTACK_LABELS,
 } from "@/lib/rag-engine";
-import { ArrowRight, Database, Search, ShieldCheck, BrainCircuit, Terminal, Shield, ShieldAlert, AlertTriangle, Sparkles } from "lucide-react";
+import { ArrowRight, Database, Search, ShieldCheck, BrainCircuit, Terminal, Shield, ShieldAlert, AlertTriangle, Sparkles, Sun, Moon, Download, HelpCircle, Menu, X, Columns2, BarChart3, Swords } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ConsensusVisualizer } from "@/components/ConsensusVisualizer";
 import { InspectionVisualizer } from "@/components/InspectionVisualizer";
-import { RetrievalPoisoningVisualizer } from "@/components/RetrievalPoisoningVisualizer";
-import { PromptInjectionVisualizer } from "@/components/PromptInjectionVisualizer";
 import { PromptAugmentationVisualizer } from "@/components/PromptAugmentationVisualizer";
+import { MetricsDashboard } from "@/components/MetricsDashboard";
+import { DefenseComparisonPanel } from "@/components/DefenseComparisonPanel";
+import { DefenseRadarChart } from "@/components/DefenseRadarChart";
+import { DefenseLogPanel } from "@/components/DefenseLogPanel";
+import { DefenseWalkthrough } from "@/components/DefenseWalkthrough";
+import { BeforeAfterView } from "@/components/BeforeAfterView";
+import { TutorialOverlay } from "@/components/TutorialOverlay";
+
+type ViewTab = "pipeline" | "showdown" | "compare";
 
 export default function Home() {
-  // --- State ---
+  // State
   const [topic, setTopic] = useState<keyof typeof TOPICS>("french-capital");
   const [attackConfig, setAttackConfig] = useState<AttackConfig>({
     poisoningRatio: 0.0,
     attackType: "conflict",
-    promptInjection: ""
+    promptInjection: "",
+    attackStrength: 0.5,
   });
   const [defenseType, setDefenseType] = useState<DefenseType>("none");
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [scenario, setScenario] = useState<Scenario | null>("basics");
   const [activeStep, setActiveStep] = useState<'kb' | 'retriever' | 'defense' | 'generator'>('kb');
 
-  // Hydration Fix: Documents must be generated on client to match
   const [allDocs, setAllDocs] = useState<Document[]>([]);
   const [retrievedDocs, setRetrievedDocs] = useState<Document[]>([]);
   const [filteredDocs, setFilteredDocs] = useState<Document[]>([]);
   const [answer, setAnswer] = useState<string>("Loading...");
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [logs, setLogs] = useState<string[]>([]);
+  const [defenseLogs, setDefenseLogs] = useState<DefenseLog[]>([]);
+  const [metrics, setMetrics] = useState<AttackMetrics | null>(null);
+  const [latency, setLatency] = useState<{ retrieval: number; defense: number; generation: number; total: number } | null>(null);
+  const [defenseSteps, setDefenseSteps] = useState<DefenseStep[]>([]);
   const [isClient, setIsClient] = useState(false);
 
+  // UI state
+  const [darkMode, setDarkMode] = useState(false);
+  const [showTutorial, setShowTutorial] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [activeTab, setActiveTab] = useState<ViewTab>("pipeline");
+
+  // URL state sync
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('topic')) setTopic(params.get('topic') as keyof typeof TOPICS);
+    if (params.get('attack')) setAttackConfig(prev => ({ ...prev, attackType: params.get('attack') as AttackConfig['attackType'] }));
+    if (params.get('defense')) setDefenseType(params.get('defense') as DefenseType);
+    if (params.get('ratio')) setAttackConfig(prev => ({ ...prev, poisoningRatio: parseFloat(params.get('ratio')!) }));
+    if (params.get('scenario')) {
+      const s = params.get('scenario') as Scenario;
+      setScenario(s);
+      if (s === 'showdown') setActiveTab('showdown');
+    }
+
+    // Show tutorial on first visit
+    if (!localStorage.getItem('rag-tutorial-seen')) {
+      setShowTutorial(true);
+      localStorage.setItem('rag-tutorial-seen', 'true');
+    }
+  }, []);
+
+  // Update URL
+  const updateUrl = useCallback(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams();
+    params.set('topic', topic);
+    params.set('attack', attackConfig.attackType);
+    params.set('defense', defenseType);
+    params.set('ratio', String(attackConfig.poisoningRatio));
+    if (scenario) params.set('scenario', scenario);
+    const url = `${window.location.pathname}?${params.toString()}`;
+    window.history.replaceState(null, '', url);
+  }, [topic, attackConfig, defenseType, scenario]);
+
+  useEffect(() => { if (isClient) updateUrl(); }, [updateUrl, isClient]);
+
+  // Pipeline execution
   useEffect(() => {
     setIsClient(true);
 
@@ -55,6 +111,10 @@ export default function Home() {
         setFilteredDocs(data.filteredDocs);
         setAnswer(data.answer);
         setLogs(data.logs);
+        setDefenseLogs(data.defenseLogs);
+        setMetrics(data.metrics);
+        setLatency(data.latency);
+        setDefenseSteps(data.defenseSteps || []);
       } catch {
         setAnswer("Error.");
       }
@@ -63,64 +123,96 @@ export default function Home() {
     fetchData();
   }, [topic, attackConfig, defenseType]);
 
-  // Derived state (no longer calculating logic here)
-  // const logs = []; // Logs are now from backend
-
-  // Handle Scenario Change
+  // Scenario handling
   const applyScenario = (newAttack: AttackConfig, newDefense: DefenseType) => {
     setAttackConfig(newAttack);
     setDefenseType(newDefense);
-    if (newAttack.attackType === 'conflict') setActiveStep('kb'); // Default to KB for basics/attack
-    if (newDefense !== 'none') setActiveStep('defense'); // Jump to defense if activated
+    if (newAttack.attackType === 'conflict') setActiveStep('kb');
+    if (newDefense !== 'none') setActiveStep('defense');
   };
 
-  // Handle Attack Change with Defense Reset
   const handleAttackChange = (newConfig: AttackConfig) => {
-    // Only reset scenario if the actual ATTACK TYPE changes, not just corpus counts
-    if (newConfig.attackType !== attackConfig.attackType) {
-      setScenario(null);
-    }
+    if (newConfig.attackType !== attackConfig.attackType) setScenario(null);
     setAttackConfig(newConfig);
 
-    // Auto-reset defense if incompatible
     const isPrompt = newConfig.attackType === 'prompt-injection';
     const isRetrieval = newConfig.attackType === 'retrieval-poisoning';
-
-    if ((isPrompt || isRetrieval) && defenseType !== 'none' && defenseType !== 'llamaGuard') {
+    if ((isPrompt || isRetrieval) && defenseType !== 'none' && defenseType !== 'llamaGuard' && defenseType !== 'ensemble') {
       setDefenseType('none');
     }
   };
 
-  if (!isClient) return null; // Prevent hydration mismatch
+  const handleScenarioChange = (s: Scenario) => {
+    setScenario(s);
+    if (s === 'showdown') setActiveTab('showdown');
+    else setActiveTab('pipeline');
+  };
 
-  // --- Render ---
+  // Export
+  const handleExport = () => {
+    const data = {
+      topic, attackConfig, defenseType, answer, metrics, latency,
+      retrievedDocs: retrievedDocs.map(d => ({ id: d.id, content: d.content, isPoisoned: d.isPoisoned, score: d.score })),
+      filteredDocs: filteredDocs.map(d => ({ id: d.id, content: d.content, isPoisoned: d.isPoisoned, score: d.score })),
+      logs,
+    };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `rag-experiment-${topic}-${attackConfig.attackType}-${defenseType}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  if (!isClient) return null;
+
+  const themeClass = darkMode ? "bg-slate-900 text-slate-100" : "bg-slate-50 text-slate-900";
+  const cardClass = darkMode ? "bg-slate-800 border-slate-700" : "bg-white border-slate-200";
+
   return (
-    <main className="flex h-screen bg-slate-50 font-sans text-slate-900">
-      {/* Sidebar - Wider */}
-      <div className="w-[400px] border-r border-slate-200 bg-white flex flex-col shadow-sm z-20">
-        <div className="p-6 border-b border-slate-100">
-          <h2 className="text-xl font-serif font-bold text-slate-900 tracking-tight flex items-center gap-2">
-            <ShieldCheck className="w-6 h-6 text-indigo-600" />
+    <main className={cn("flex h-screen font-sans transition-colors duration-300", themeClass)}>
+      {/* Tutorial */}
+      {showTutorial && <TutorialOverlay onClose={() => setShowTutorial(false)} />}
+
+      {/* Mobile menu button */}
+      <button
+        onClick={() => setSidebarOpen(!sidebarOpen)}
+        className="lg:hidden fixed top-4 left-4 z-50 p-2 bg-white border border-slate-200 rounded-lg shadow-md"
+      >
+        {sidebarOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+      </button>
+
+      {/* Sidebar */}
+      <div className={cn(
+        "border-r flex flex-col shadow-sm z-20 transition-all duration-300",
+        darkMode ? "bg-slate-800 border-slate-700" : "bg-white border-slate-200",
+        sidebarOpen ? "w-[380px]" : "w-0 overflow-hidden",
+        "max-lg:fixed max-lg:inset-y-0 max-lg:left-0 max-lg:z-40"
+      )}>
+        <div className={cn("p-5 border-b", darkMode ? "border-slate-700" : "border-slate-100")}>
+          <h2 className={cn("text-lg font-serif font-bold tracking-tight flex items-center gap-2", darkMode ? "text-white" : "text-slate-900")}>
+            <ShieldCheck className="w-5 h-5 text-indigo-600" />
             RAG Safety Playground
           </h2>
-          <p className="text-xs text-slate-500 mt-2 font-serif italic">
-            &quot;Visualizing RAG Security: Basics, Attacks, and Defenses&quot;
+          <p className={cn("text-[10px] mt-1 font-serif italic", darkMode ? "text-slate-400" : "text-slate-500")}>
+            &quot;Visualizing RAG Security: Attacks &amp; Defenses&quot;
           </p>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-4 space-y-8">
+        <div className="flex-1 overflow-y-auto p-4 space-y-6 custom-scrollbar">
           <ScenarioGuide
             currentScenario={scenario}
             onApply={applyScenario}
-            setScenario={setScenario}
+            setScenario={handleScenarioChange}
           />
 
-          <div className="border-t border-slate-100 pt-4">
+          <div className={cn("border-t pt-4", darkMode ? "border-slate-700" : "border-slate-100")}>
             <details className="group" open>
-              <summary className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 px-2 cursor-pointer list-none flex items-center gap-2 hover:text-slate-600">
+              <summary className={cn("text-xs font-bold uppercase tracking-wider mb-2 px-2 cursor-pointer list-none flex items-center gap-2 hover:text-slate-600", darkMode ? "text-slate-500" : "text-slate-400")}>
                 <span>Manual Controls</span>
-                <span className="text-[10px] bg-slate-100 px-1 rounded group-open:hidden">+</span>
-                <span className="text-[10px] bg-slate-100 px-1 rounded hidden group-open:inline">-</span>
+                <span className={cn("text-[10px] px-1 rounded group-open:hidden", darkMode ? "bg-slate-700" : "bg-slate-100")}>+</span>
+                <span className={cn("text-[10px] px-1 rounded hidden group-open:inline", darkMode ? "bg-slate-700" : "bg-slate-100")}>-</span>
               </summary>
               <div className="pt-2">
                 <Controls
@@ -139,278 +231,386 @@ export default function Home() {
       </div>
 
       {/* Main Content */}
-      <div className="flex-1 flex flex-col bg-slate-50/50">
-        <header className="h-16 border-b border-slate-200 bg-white flex items-center justify-between px-8 shadow-sm">
-          <h1 className="text-lg font-serif font-semibold text-slate-800">
-            Experiment Dashboard
-          </h1>
-          <div className="flex items-center gap-2 text-xs font-mono text-slate-500 bg-slate-100 px-3 py-1 rounded-md border border-slate-200">
-            <Database className="w-3 h-3" />
-            <span>Pool: {allDocs.length} Docs</span>
-            <span className="text-slate-300">|</span>
-            <span>Model: GPT-4-Sim</span>
+      <div className="flex-1 flex flex-col min-w-0">
+        {/* Header */}
+        <header className={cn("h-14 border-b flex items-center justify-between px-6 shadow-sm shrink-0", darkMode ? "bg-slate-800 border-slate-700" : "bg-white border-slate-200")}>
+          <div className="flex items-center gap-4">
+            <h1 className={cn("text-base font-serif font-semibold hidden sm:block", darkMode ? "text-slate-200" : "text-slate-800")}>
+              Experiment Dashboard
+            </h1>
+            {/* Tab switcher */}
+            <div className="flex gap-1 bg-slate-100 rounded-lg p-0.5">
+              {([
+                { id: "pipeline", label: "Pipeline", icon: Terminal },
+                { id: "showdown", label: "Showdown", icon: Swords },
+                { id: "compare", label: "Compare", icon: Columns2 },
+              ] as const).map(tab => (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={cn(
+                    "flex items-center gap-1.5 px-3 py-1 text-xs font-bold rounded-md transition-all",
+                    activeTab === tab.id ? "bg-white text-slate-800 shadow-sm" : "text-slate-500 hover:text-slate-700"
+                  )}
+                >
+                  <tab.icon className="w-3 h-3" />
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <div className={cn("hidden sm:flex items-center gap-2 text-xs font-mono px-3 py-1 rounded-md border", darkMode ? "bg-slate-700 border-slate-600 text-slate-400" : "bg-slate-100 border-slate-200 text-slate-500")}>
+              <Database className="w-3 h-3" />
+              <span>{allDocs.length} Docs</span>
+              <span className="text-slate-300">|</span>
+              <span>{ATTACK_LABELS[attackConfig.attackType]}</span>
+              <span className="text-slate-300">|</span>
+              <span>{DEFENSE_LABELS[defenseType]}</span>
+            </div>
+
+            <button onClick={handleExport} className="p-1.5 rounded-md hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors" title="Export results as JSON">
+              <Download className="w-4 h-4" />
+            </button>
+            <button onClick={() => setDarkMode(!darkMode)} className="p-1.5 rounded-md hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors" title="Toggle theme">
+              {darkMode ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+            </button>
+            <button onClick={() => setShowTutorial(true)} className="p-1.5 rounded-md hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors" title="Tutorial">
+              <HelpCircle className="w-4 h-4" />
+            </button>
           </div>
         </header>
 
-        <div className="flex-1 overflow-y-auto p-8">
+        {/* Content Area */}
+        <div className="flex-1 overflow-y-auto p-6">
+          {activeTab === "pipeline" && (
+            <PipelineView
+              topic={topic}
+              attackConfig={attackConfig}
+              defenseType={defenseType}
+              scenario={scenario}
+              activeStep={activeStep}
+              setActiveStep={setActiveStep}
+              allDocs={allDocs}
+              retrievedDocs={retrievedDocs}
+              filteredDocs={filteredDocs}
+              answer={answer}
+              logs={logs}
+              defenseLogs={defenseLogs}
+              metrics={metrics}
+              latency={latency}
+              defenseSteps={defenseSteps}
+              darkMode={darkMode}
+              cardClass={cardClass}
+            />
+          )}
 
-          {/* Pipeline Diagram (Academic Style) */}
-          <div className="max-w-5xl mx-auto mb-12">
-            <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider mb-4 flex items-center gap-2">
-              <Terminal className="w-4 h-4" /> System Architecture (Click to Inspect)
-            </h3>
+          {activeTab === "showdown" && (
+            <ShowdownView
+              topic={topic}
+              attackConfig={attackConfig}
+              cardClass={cardClass}
+            />
+          )}
 
-            <div className="relative bg-white rounded-xl border border-slate-200 shadow-sm p-8 min-h-[200px] flex items-center justify-between gap-4">
+          {activeTab === "compare" && (
+            <CompareView
+              topic={topic}
+              attackConfig={attackConfig}
+              defenseType={defenseType}
+              cardClass={cardClass}
+            />
+          )}
+        </div>
+      </div>
+    </main>
+  );
+}
 
-              {/* Step 1: KB */}
+// ---- Pipeline View ----
+function PipelineView({
+  topic, attackConfig, defenseType, scenario, activeStep, setActiveStep,
+  allDocs, retrievedDocs, filteredDocs, answer, logs, defenseLogs, metrics, latency, defenseSteps,
+  darkMode, cardClass,
+}: {
+  topic: keyof typeof TOPICS;
+  attackConfig: AttackConfig;
+  defenseType: DefenseType;
+  scenario: Scenario | null;
+  activeStep: 'kb' | 'retriever' | 'defense' | 'generator';
+  setActiveStep: (s: 'kb' | 'retriever' | 'defense' | 'generator') => void;
+  allDocs: Document[];
+  retrievedDocs: Document[];
+  filteredDocs: Document[];
+  answer: string;
+  logs: string[];
+  defenseLogs: DefenseLog[];
+  metrics: AttackMetrics | null;
+  latency: { retrieval: number; defense: number; generation: number; total: number } | null;
+  defenseSteps: DefenseStep[];
+  darkMode: boolean;
+  cardClass: string;
+}) {
+  const steps = [
+    { id: 'kb' as const, label: 'Knowledge Base', sub: 'Adversarial Corpus', icon: Database, hasAttack: attackConfig.poisoningRatio > 0 },
+    { id: 'retriever' as const, label: 'Retriever', sub: 'Dense Passage (Top-K)', icon: Search, hasAttack: attackConfig.poisoningRatio > 0 },
+    { id: 'defense' as const, label: defenseType === 'none' ? 'Prompting' : DEFENSE_LABELS[defenseType], sub: defenseType === 'none' ? 'Context Integration' : 'Active Filtering', icon: defenseType === 'ragDefender' ? BrainCircuit : defenseType === 'robustRag' ? ShieldCheck : defenseType === 'ensemble' ? Shield : ShieldAlert, hasAttack: false },
+    { id: 'generator' as const, label: 'LLM Generator', sub: 'Text Synthesis', icon: Terminal, hasAttack: false },
+  ];
+
+  return (
+    <div className="space-y-6 max-w-7xl mx-auto">
+      {/* Pipeline Diagram */}
+      <div>
+        <h3 className={cn("text-xs font-bold uppercase tracking-wider mb-3 flex items-center gap-2", darkMode ? "text-slate-500" : "text-slate-500")}>
+          <Terminal className="w-3.5 h-3.5" /> System Architecture (Click to Inspect)
+        </h3>
+
+        <div className={cn("relative rounded-xl border shadow-sm p-6 flex items-center justify-between gap-2", cardClass)}>
+          {steps.map((step, i) => (
+            <React.Fragment key={step.id}>
               <button
-                onClick={() => setActiveStep('kb')}
+                onClick={() => setActiveStep(step.id)}
                 className={cn(
-                  "flex flex-col items-center gap-3 relative group w-1/4 transition-transform hover:scale-105",
-                  activeStep === 'kb' ? "opacity-100" : "opacity-60 grayscale hover:opacity-100 hover:grayscale-0"
+                  "flex flex-col items-center gap-2 relative group w-1/4 transition-transform hover:scale-105",
+                  activeStep === step.id ? "opacity-100" : "opacity-50 grayscale hover:opacity-100 hover:grayscale-0"
                 )}
               >
                 <div className={cn(
-                  "w-16 h-16 rounded-lg border-2 flex items-center justify-center bg-slate-50 transition-colors relative",
-                  attackConfig.poisoningRatio > 0 ? "border-red-400 bg-red-50" : "border-slate-300",
-                  activeStep === 'kb' ? "ring-4 ring-indigo-100 border-indigo-500" : ""
+                  "w-14 h-14 rounded-lg border-2 flex items-center justify-center relative transition-colors",
+                  step.id === 'defense' ? "rounded-full border-dashed" : "",
+                  step.hasAttack && scenario !== 'basics' ? "border-red-400 bg-red-50" :
+                  defenseType !== 'none' && step.id === 'defense' ? "border-blue-500 bg-blue-50" :
+                  darkMode ? "border-slate-600 bg-slate-700" : "border-slate-300 bg-slate-50",
+                  activeStep === step.id ? "ring-4 ring-indigo-100 border-indigo-500" : ""
                 )}>
-                  <Database className={cn("w-8 h-8", attackConfig.poisoningRatio > 0 ? "text-red-500" : "text-slate-600")} />
-                  {/* Attack Indicator */}
-                  {scenario === 'attack' && (
-                    <div className="absolute -top-3 -right-3 w-6 h-6 bg-red-500 rounded-full flex items-center justify-center text-white border-2 border-white animate-bounce">
-                      <AlertTriangle className="w-3 h-3" />
+                  <step.icon className={cn("w-7 h-7", step.hasAttack && scenario !== 'basics' ? "text-red-500" : defenseType !== 'none' && step.id === 'defense' ? "text-blue-600" : darkMode ? "text-slate-400" : "text-slate-600")} />
+                  {step.hasAttack && scenario === 'attack' && (
+                    <div className="absolute -top-2 -right-2 w-5 h-5 bg-red-500 rounded-full flex items-center justify-center text-white border-2 border-white animate-bounce">
+                      <AlertTriangle className="w-2.5 h-2.5" />
                     </div>
                   )}
                 </div>
-                <span className="font-serif font-bold text-sm text-slate-700">Knowledge Base</span>
-                <span className="text-[10px] text-center text-slate-500 px-2 leading-tight">
-                  Corpus injected with <br /> adversarial passages
-                </span>
-              </button>
+                <span className={cn("font-serif font-bold text-xs", darkMode ? "text-slate-300" : "text-slate-700")}>{step.label}</span>
+                <span className={cn("text-[9px] text-center px-1 leading-tight", darkMode ? "text-slate-500" : "text-slate-500")}>{step.sub}</span>
 
-              <ArrowRight className={cn("w-6 h-6 transition-colors", activeStep === 'kb' ? "text-indigo-400" : "text-slate-300")} />
-
-              {/* Step 2: Retriever */}
-              <button
-                onClick={() => setActiveStep('retriever')}
-                className={cn(
-                  "flex flex-col items-center gap-3 relative group w-1/4 transition-transform hover:scale-105",
-                  activeStep === 'retriever' ? "opacity-100" : "opacity-60 grayscale hover:opacity-100 hover:grayscale-0"
+                {/* Latency annotation */}
+                {latency && (
+                  <span className="text-[8px] font-mono text-slate-400 bg-slate-100 px-1 rounded">
+                    {step.id === 'kb' ? '' : step.id === 'retriever' ? `${latency.retrieval}ms` : step.id === 'defense' ? `${latency.defense}ms` : `${latency.generation}ms`}
+                  </span>
                 )}
-              >
-                <div className={cn(
-                  "w-16 h-16 rounded-lg border-2 border-slate-300 flex items-center justify-center bg-slate-50 relative",
-                  activeStep === 'retriever' ? "ring-4 ring-indigo-100 border-indigo-500" : ""
-                )}>
-                  <Search className="w-8 h-8 text-slate-600" />
-                  {scenario === 'attack' && (
-                    <div className="absolute -top-3 -right-3 w-6 h-6 bg-orange-500 rounded-full flex items-center justify-center text-white border-2 border-white animate-pulse">
-                      <AlertTriangle className="w-3 h-3" />
-                    </div>
-                  )}
-                </div>
-                <span className="font-serif font-bold text-sm text-slate-700">Retriever</span>
-                <span className="text-[10px] text-center text-slate-500 px-2 leading-tight">
-                  Dense Passage Retrieval <br /> (Top-K Selection)
-                </span>
               </button>
-
-              <ArrowRight className={cn("w-6 h-6 transition-colors", activeStep === 'retriever' ? "text-indigo-400" : "text-slate-300")} />
-
-              {/* Step 3: Defense Middleware */}
-              <button
-                onClick={() => setActiveStep('defense')}
-                className={cn(
-                  "flex flex-col items-center gap-3 relative group w-1/4 transition-transform hover:scale-105",
-                  activeStep === 'defense' ? "opacity-100" : "opacity-60 grayscale hover:opacity-100 hover:grayscale-0"
-                )}
-              >
-                <div className={cn(
-                  "w-16 h-16 rounded-full border-2 border-dashed flex items-center justify-center transition-all",
-                  defenseType !== 'none' ? "border-blue-500 bg-blue-50" : "border-slate-300 bg-slate-50",
-                  activeStep === 'defense' ? "ring-4 ring-indigo-100 border-indigo-500" : ""
-                )}>
-                  {defenseType === 'ragDefender' ? <BrainCircuit className="w-8 h-8 text-blue-600" /> :
-                    defenseType === 'robustRag' ? <ShieldCheck className="w-8 h-8 text-blue-600" /> :
-                      defenseType === 'discern' ? <Sparkles className="w-8 h-8 text-blue-600" /> :
-                        defenseType === 'paraphrase' ? <Shield className="w-8 h-8 text-blue-600" /> :
-                          defenseType === 'llamaGuard' ? <ShieldAlert className="w-8 h-8 text-blue-600" /> :
-                            <BrainCircuit className="w-8 h-8 text-slate-400" />}
+              {i < steps.length - 1 && (
+                <div className="flex flex-col items-center gap-0.5">
+                  <ArrowRight className={cn("w-5 h-5 transition-colors", activeStep === step.id ? "text-indigo-400" : darkMode ? "text-slate-600" : "text-slate-300")} />
+                  {/* Animated data flow dot */}
+                  <div className="relative w-8 h-0.5">
+                    <div className={cn("absolute inset-y-0 left-0 w-2 h-0.5 rounded-full animate-progress-line",
+                      attackConfig.poisoningRatio > 0 && i === 0 ? "bg-red-400" : "bg-indigo-400"
+                    )} />
+                  </div>
                 </div>
-                <span className="font-serif font-bold text-sm text-slate-700">
-                  {defenseType === 'none' ? "Prompting" :
-                    defenseType === 'robustRag' ? "RobustRAG" :
-                      defenseType === 'discern' ? "Discern-and-Answer" :
-                        defenseType === 'ragDefender' ? "RAGDefender" :
-                          defenseType === 'paraphrase' ? "Paraphrase" :
-                            defenseType === 'llamaGuard' ? "LlamaGuard" : defenseType}
-                </span>
-                <span className="text-[10px] text-center text-slate-500 px-2 leading-tight">
-                  {defenseType === 'ragDefender' ? "Cluster-based Filtering" :
-                    defenseType === 'robustRag' ? "Passage Inspection" :
-                      defenseType === 'discern' ? "Generative Consensus" :
-                        defenseType === 'paraphrase' ? "Input Sanitization" :
-                          defenseType === 'llamaGuard' ? "Guardrail System" :
-                            "Context Integration"}
-                </span>
-              </button>
+              )}
+            </React.Fragment>
+          ))}
+        </div>
+      </div>
 
-              <ArrowRight className={cn("w-6 h-6 transition-colors", activeStep === 'defense' ? "text-indigo-400" : "text-slate-300")} />
-
-              {/* Step 4: Generator */}
-              <button
-                onClick={() => setActiveStep('generator')}
-                className={cn(
-                  "flex flex-col items-center gap-3 relative group w-1/4 transition-transform hover:scale-105",
-                  activeStep === 'generator' ? "opacity-100" : "opacity-60 grayscale hover:opacity-100 hover:grayscale-0"
-                )}
-              >
-                <div className={cn(
-                  "w-16 h-16 rounded-lg border-2 border-slate-300 flex items-center justify-center bg-slate-50 relative",
-                  activeStep === 'generator' ? "ring-4 ring-indigo-100 border-indigo-500" : ""
-                )}>
-                  <Terminal className="w-8 h-8 text-slate-600" />
-                  {scenario === 'attack' && (
-                    <div className="absolute -top-3 -right-3 w-6 h-6 bg-purple-500 rounded-full flex items-center justify-center text-white border-2 border-white">
-                      <AlertTriangle className="w-3 h-3" />
-                    </div>
-                  )}
-                </div>
-                <span className="font-serif font-bold text-sm text-slate-700">LLM Generator</span>
-                <span className="text-[10px] text-center text-slate-500 px-2 leading-tight">
-                  Context-Aware <br /> Text Synthesis
-                </span>
-              </button>
-
+      {/* Visualization Grid */}
+      <div className="grid grid-cols-12 gap-6">
+        {/* Left Column: Cluster Map + Output */}
+        <div className="col-span-12 lg:col-span-5 flex flex-col gap-4">
+          <div className={cn("rounded-xl border shadow-sm p-5", cardClass)}>
+            <h4 className={cn("font-serif font-bold mb-3 flex items-center justify-between text-sm", darkMode ? "text-slate-200" : "text-slate-800")}>
+              <span>
+                {activeStep === 'kb' ? "Knowledge Base Overview" :
+                 activeStep === 'retriever' ? "Retriever Scanning" :
+                 activeStep === 'defense' ? (defenseType === 'none' ? "Prompt Assembly" : "Defense Inspection") :
+                 "Embedding Space"}
+              </span>
+              <span className="text-[9px] font-sans font-normal text-slate-400 bg-slate-100 px-2 py-0.5 rounded">2D Projection</span>
+            </h4>
+            <ClusterMap
+              documents={
+                (activeStep === 'defense' || activeStep === 'generator')
+                  ? [...filteredDocs, ...allDocs.filter(doc => !filteredDocs.some(f => f.id === doc.id))]
+                  : allDocs
+              }
+              highlightedIds={activeStep === 'retriever' ? retrievedDocs.map(d => d.id) : []}
+              defenseType={activeStep === 'defense' ? defenseType : undefined}
+              showQuery={activeStep === 'retriever' || activeStep === 'defense'}
+            />
+            <div className={cn("text-center mt-3 text-[10px] italic", darkMode ? "text-slate-500" : "text-slate-400")}>
+              {activeStep === 'kb' && "The 'Sea of Documents' before retrieval. Zoom with scroll, shift+drag to pan."}
+              {activeStep === 'retriever' && "Scanning for nearest neighbors (Cosine Similarity)..."}
+              {activeStep === 'defense' && "Convex hulls show detected clusters. Red = adversarial."}
+              {activeStep === 'generator' && "Final document set sent to LLM."}
             </div>
           </div>
 
-          {/* Visualization Grid */}
-          <div className="grid grid-cols-12 gap-8 max-w-7xl mx-auto">
-            {/* Left: 3D Cluster Interaction */}
-            <div className="col-span-12 lg:col-span-5 flex flex-col gap-4">
-              <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
-                <h4 className="font-serif font-bold text-slate-800 mb-4 flex items-center justify-between">
-                  <span>
-                    {activeStep === 'kb' ? "Knowledge Base Overview" :
-                      activeStep === 'retriever' ? "Retriever Scanning" :
-                        activeStep === 'defense' ? (defenseType === 'none' ? "Prompt Assembly" : "Defense Inspection") : "Embedding Space"}
-                  </span>
-                  <span className="text-[10px] font-sans font-normal text-slate-400 bg-slate-100 px-2 py-1 rounded">2D Projection</span>
-                </h4>
-                <div className="flex justify-center py-4">
-                  {/* Reuse ClusterMap for KB, Retriever, Defense steps */}
-                  <ClusterMap
-                    documents={
-                      (activeStep === 'defense' || activeStep === 'generator')
-                        ? [...filteredDocs, ...allDocs.filter(doc => !filteredDocs.some(f => f.id === doc.id))]
-                        : allDocs
-                    }
-                    highlightedIds={activeStep === 'retriever' ? retrievedDocs.map(d => d.id) : []}
-                    defenseType={activeStep === 'defense' ? defenseType : undefined}
-                    showQuery={activeStep === 'retriever' || activeStep === 'defense'}
-                  />
-                </div>
-                <div className="text-center mt-4 text-xs text-slate-400 italic">
-                  {activeStep === 'kb' && "The 'Sea of Documents' before retrieval."}
-                  {activeStep === 'retriever' && "Scanning for nearest neighbors (Cosine Similarity)..."}
-                  {activeStep === 'defense' && "Isolating clusters or filtering documents..."}
+          {/* Output Box (Generator step) */}
+          {activeStep === 'generator' && (
+            <div className="bg-slate-900 rounded-xl border border-slate-800 p-4 shadow-sm">
+              <h4 className="flex items-center gap-2 text-[10px] font-bold uppercase text-slate-500 mb-2">
+                <Terminal className="w-3 h-3" /> Model Output
+              </h4>
+              <div className="font-mono text-xs leading-relaxed">
+                <p className="mb-1 text-green-400">User: {TOPICS[topic]}</p>
+                <p className={cn(answer.includes("Incorrect") || answer.includes("cannot") || answer.includes("faked") || answer.includes("London") || answer.includes("removed") ? "text-red-400" : "text-white")}>
+                  AI: {answer}
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Metrics Dashboard */}
+          {metrics && <MetricsDashboard metrics={metrics} latency={latency || undefined} />}
+        </div>
+
+        {/* Right Column */}
+        <div className="col-span-12 lg:col-span-7 flex flex-col gap-4">
+          {/* Step-specific views */}
+          {activeStep === 'generator' ? (
+            <div className="flex flex-col gap-4">
+              <div className={cn("p-5 rounded-xl border shadow-sm flex flex-col gap-3 opacity-80 hover:opacity-100 transition-opacity", cardClass)}>
+                <h3 className={cn("text-sm font-bold flex items-center gap-2", darkMode ? "text-slate-200" : "text-slate-800")}>
+                  <Terminal className="w-4 h-4 text-purple-600" /> Final Prompt (Sent to LLM)
+                </h3>
+                <div className={cn("p-3 rounded border text-[10px] font-mono whitespace-pre-wrap max-h-40 overflow-y-auto custom-scrollbar", darkMode ? "bg-slate-700 border-slate-600 text-slate-300" : "bg-slate-50 border-slate-200 text-slate-700")}>
+                  <span className="font-bold text-slate-400">SYSTEM:</span> You are a helpful assistant. Answer based on context.<br />
+                  <span className="font-bold text-indigo-500">USER:</span> {TOPICS[topic]}
+                  {attackConfig.attackType === 'prompt-injection' && attackConfig.promptInjection && (
+                    <span className="text-red-500 font-bold ml-1">{attackConfig.promptInjection}</span>
+                  )}<br />
+                  <span className="font-bold text-slate-400">CONTEXT:</span><br />
+                  {filteredDocs.slice(0, 5).map((d, i) => (
+                    <span key={i} className={cn(d.isPoisoned ? "text-red-600" : darkMode ? "text-slate-400" : "text-slate-600")}>
+                      [{i + 1}] {d.content}<br />
+                    </span>
+                  ))}
                 </div>
               </div>
 
-              {/* Simple Output Box (Hidden unless in Generator step) */}
-              {(activeStep === 'generator') && (
-                <div className="bg-slate-900 rounded-xl border border-slate-800 p-4 shadow-sm text-slate-300">
-                  <h4 className="flex items-center gap-2 text-[10px] font-bold uppercase text-slate-500 mb-2">
-                    <Terminal className="w-3 h-3" /> Model Output
-                  </h4>
-                  <div className="font-mono text-xs leading-relaxed">
-                    <p className="mb-1 text-green-400">User: {TOPICS[topic]}</p>
-                    <p className={cn(answer.includes("Incorrect") ? "text-red-400" : "text-white")}>
-                      AI: {answer}
-                    </p>
+              <div className="bg-slate-900 p-5 rounded-xl border border-slate-800 shadow-lg">
+                <h3 className="text-sm font-bold text-green-400 flex items-center gap-2">
+                  <Sparkles className="w-4 h-4" /> Generated Answer
+                </h3>
+                <p className="text-lg text-white font-serif leading-relaxed mt-2">{answer}</p>
+                {latency && (
+                  <div className="text-[10px] text-slate-500 font-mono mt-3 border-t border-slate-800 pt-2">
+                    Latency: {latency.total}ms | Retrieval: {latency.retrieval}ms | Defense: {latency.defense}ms | Generation: {latency.generation}ms
                   </div>
-                </div>
-              )}
+                )}
+              </div>
             </div>
+          ) : activeStep === 'defense' && defenseType === 'none' ? (
+            <div className={cn("p-5 rounded-xl border shadow-sm", cardClass)}>
+              <PromptAugmentationVisualizer topic={TOPICS[topic]} documents={retrievedDocs} attackConfig={attackConfig} />
+            </div>
+          ) : activeStep === 'defense' && defenseType === 'robustRag' ? (
+            <div className="flex flex-col gap-4">
+              <div className={cn("p-5 rounded-xl border shadow-sm", cardClass)}>
+                <InspectionVisualizer documents={retrievedDocs} />
+              </div>
+              {defenseSteps.length > 0 && <DefenseWalkthrough steps={defenseSteps} defenseType={defenseType} />}
+            </div>
+          ) : activeStep === 'defense' && defenseType === 'discern' ? (
+            <div className="flex flex-col gap-4">
+              <div className={cn("p-5 rounded-xl border shadow-sm", cardClass)}>
+                <ConsensusVisualizer documents={retrievedDocs} />
+              </div>
+              {defenseSteps.length > 0 && <DefenseWalkthrough steps={defenseSteps} defenseType={defenseType} />}
+            </div>
+          ) : activeStep === 'defense' && defenseType === 'paraphrase' ? (
+            <div className={cn("p-5 rounded-xl border shadow-sm", cardClass)}>
+              <PromptAugmentationVisualizer topic={TOPICS[topic]} documents={filteredDocs} attackConfig={attackConfig} />
+            </div>
+          ) : activeStep === 'defense' && (defenseType === 'ragDefender' || defenseType === 'ensemble') ? (
+            <div className="flex flex-col gap-4">
+              {defenseSteps.length > 0 && <DefenseWalkthrough steps={defenseSteps} defenseType={defenseType} />}
+              <div className="max-h-[400px] flex flex-col">
+                <DocumentList documents={filteredDocs} title="Survived Defense Filter" showDiff />
+              </div>
+            </div>
+          ) : (
+            <div className="max-h-[600px] flex flex-col">
+              <DocumentList
+                documents={activeStep === 'kb' ? allDocs : (activeStep === 'retriever' ? retrievedDocs : filteredDocs)}
+                title={activeStep === 'kb' ? "All Documents (Knowledge Base)" : "Retrieved Documents"}
+                showDiff={activeStep === 'retriever'}
+              />
+            </div>
+          )}
 
-            {/* Right: Outputs & Analysis */}
-            <div className="col-span-12 lg:col-span-7 flex flex-col gap-6">
+          {/* Defense Log Panel */}
+          {defenseLogs.length > 0 && activeStep !== 'kb' && (
+            <DefenseLogPanel logs={defenseLogs} plainLogs={logs} />
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
 
-              {/* Dynamic Component Switching based on Active Step */}
-              {activeStep === 'generator' ? (
-                /* Generator Step View */
-                <div className="flex flex-col gap-6">
-                  {/* 1. Final Prompt Display */}
-                  <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex flex-col gap-4 opacity-75 hover:opacity-100 transition-opacity">
-                    <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
-                      <Terminal className="w-4 h-4 text-purple-600" /> Final Prompt (Sent to LLM)
-                    </h3>
-                    <div className="bg-slate-50 p-4 rounded border border-slate-200 text-[10px] font-mono text-slate-700 whitespace-pre-wrap max-h-40 overflow-y-auto">
-                      <span className="font-bold text-slate-400">SYSTEM:</span> You are a helpful assistant. Answer based on context.<br />
-                      <span className="font-bold text-indigo-500">USER:</span> {TOPICS[topic]}
-                      {attackConfig.attackType === 'prompt-injection' && attackConfig.promptInjection && (
-                        <span className="text-red-500 font-bold ml-1">
-                          {attackConfig.promptInjection}
-                        </span>
-                      )}<br />
-                      <span className="font-bold text-slate-400">CONTEXT:</span><br />
-                      {filteredDocs.slice(0, 5).map((d, i) => (
-                        <span key={i} className={cn(d.isPoisoned ? "text-red-600" : "text-slate-600")}>
-                          [{i + 1}] {d.content}<br />
-                        </span>
-                      ))}
-                    </div>
-                  </div>
+// ---- Showdown View ----
+function ShowdownView({ topic, attackConfig, cardClass }: { topic: string; attackConfig: AttackConfig; cardClass: string }) {
+  return (
+    <div className="space-y-6 max-w-7xl mx-auto">
+      <div className="text-center mb-4">
+        <h2 className="text-xl font-serif font-bold text-slate-800 flex items-center justify-center gap-2">
+          <Swords className="w-5 h-5 text-indigo-500" />
+          Defense Showdown
+        </h2>
+        <p className="text-xs text-slate-500 mt-1">All 7 defenses running simultaneously against {ATTACK_LABELS[attackConfig.attackType]}</p>
+      </div>
 
-                  <ArrowRight className="w-8 h-8 text-slate-300 mx-auto rotate-90 lg:rotate-0" />
+      <DefenseComparisonPanel topic={topic} attackConfig={attackConfig} />
 
-                  {/* 2. Model Output */}
-                  <div className="bg-slate-900 p-6 rounded-xl border border-slate-800 shadow-lg flex flex-col gap-4">
-                    <h3 className="text-sm font-bold text-green-400 flex items-center gap-2">
-                      <Sparkles className="w-4 h-4" /> Generated Answer
-                    </h3>
-                    <p className="text-lg text-white font-serif leading-relaxed">
-                      {answer}
-                    </p>
-                    <div className="text-[10px] text-slate-500 font-mono mt-2 border-t border-slate-800 pt-2">
-                      Latency: 624ms | Model: GPT-4-Simulated
-                    </div>
-                  </div>
-                </div>
-              ) : activeStep === 'defense' && defenseType === 'none' ? (
-                <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-                  <PromptAugmentationVisualizer topic={TOPICS[topic]} documents={retrievedDocs} attackConfig={attackConfig} />
-                </div>
-              ) : activeStep === 'defense' && defenseType === 'robustRag' ? (
-                /* Special Defense View (RobustRAG) */
-                <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-                  <InspectionVisualizer documents={retrievedDocs} />
-                </div>
-              ) : activeStep === 'defense' && defenseType === 'discern' ? (
-                /* Special Defense View (Discern) */
-                <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-                  <ConsensusVisualizer documents={retrievedDocs} />
-                </div>
-              ) : activeStep === 'defense' && defenseType === 'paraphrase' ? (
-                /* Paraphrase Defense View - Shows FILTERED/MODIFIED docs */
-                <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-                  <PromptAugmentationVisualizer topic={TOPICS[topic]} documents={filteredDocs} attackConfig={attackConfig} />
-                </div>
-              ) : (
-                /* Default / KB / Retriever View */
-                <div className="max-h-[600px] flex flex-col">
-                  <DocumentList
-                    documents={activeStep === 'kb' ? allDocs : (activeStep === 'retriever' ? retrievedDocs : filteredDocs)}
-                    title={activeStep === 'kb' ? "All Documents (Knowledge Base)" : "Passed to Generator"}
-                  />
-                </div>
-              )}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <DefenseRadarChart topic={topic} attackConfig={attackConfig} />
+        <div className={cn("rounded-xl border shadow-sm p-5", cardClass)}>
+          <h4 className="font-serif font-bold text-slate-800 mb-3 flex items-center gap-2 text-sm">
+            <BarChart3 className="w-4 h-4 text-indigo-500" />
+            Attack Configuration
+          </h4>
+          <div className="space-y-3 text-xs text-slate-600">
+            <div className="flex justify-between p-2 bg-slate-50 rounded">
+              <span>Topic</span><span className="font-bold">{TOPICS[topic as keyof typeof TOPICS]}</span>
+            </div>
+            <div className="flex justify-between p-2 bg-slate-50 rounded">
+              <span>Attack Type</span><span className="font-bold text-red-600">{ATTACK_LABELS[attackConfig.attackType]}</span>
+            </div>
+            <div className="flex justify-between p-2 bg-slate-50 rounded">
+              <span>Poisoning Ratio</span><span className="font-bold">{Math.round(attackConfig.poisoningRatio * 100)}%</span>
+            </div>
+            <div className="flex justify-between p-2 bg-slate-50 rounded">
+              <span>Attack Strength</span><span className="font-bold">{Math.round((attackConfig.attackStrength ?? 0.5) * 100)}%</span>
+            </div>
+            <div className="flex justify-between p-2 bg-slate-50 rounded">
+              <span>Corpus Size</span><span className="font-bold">{(attackConfig.irrelevantDocsCount ?? 40) + (attackConfig.relevantDocsCount ?? 5)} docs</span>
             </div>
           </div>
         </div>
       </div>
-    </main>
+    </div>
+  );
+}
+
+// ---- Compare View ----
+function CompareView({ topic, attackConfig, defenseType, cardClass }: { topic: string; attackConfig: AttackConfig; defenseType: DefenseType; cardClass: string }) {
+  return (
+    <div className="space-y-6 max-w-5xl mx-auto">
+      <div className="text-center mb-4">
+        <h2 className="text-xl font-serif font-bold text-slate-800 flex items-center justify-center gap-2">
+          <Columns2 className="w-5 h-5 text-indigo-500" />
+          Before / After Analysis
+        </h2>
+        <p className="text-xs text-slate-500 mt-1">Side-by-side: clean pipeline vs. attack + defense</p>
+      </div>
+
+      <BeforeAfterView topic={topic} attackConfig={attackConfig} defenseType={defenseType} />
+    </div>
   );
 }
